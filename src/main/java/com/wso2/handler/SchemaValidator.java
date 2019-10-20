@@ -20,9 +20,11 @@ import com.fasterxml.jackson.databind.node.JsonNodeType;
 import com.jayway.jsonpath.JsonPath;
 import org.apache.axiom.om.OMElement;
 import org.apache.axis2.AxisFault;
+import org.apache.commons.lang.ObjectUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.config.Entry;
@@ -98,18 +100,20 @@ public class SchemaValidator extends AbstractHandler {
             logger.debug("Content type of the request message :" + contentType);
         }
         try {
-            RelayUtils.buildMessage(axis2MC);
-            logger.debug("Successfully built the request message");
+            ObjectMapper objectMapper = new ObjectMapper();
+            rootNode = objectMapper.readTree(swagger.getBytes());
+            requestMethod = messageContext.getProperty(SchemaValidatorConstant.
+                    ELECTED_REQUEST_METHOD).toString();
             if (!SchemaValidatorConstant.APPLICATION_JSON.equals(contentType)) {
                 return true;
             }
             if (swagger  == null) {
                 return true;
             }
-            ObjectMapper objectMapper = new ObjectMapper();
-            rootNode = objectMapper.readTree(swagger.getBytes());
-            requestMethod = messageContext.getProperty(SchemaValidatorConstant.
-                    ELECTED_REQUEST_METHOD).toString();
+            RelayUtils.buildMessage(axis2MC);
+            logger.debug("Successfully built the request message");
+
+
             JSONObject payloadObject = getMessageContent(messageContext);
             if (!APIConstants.SupportedHTTPVerbs.GET.name().equals(requestMethod) &&
                     payloadObject != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(payloadObject)) {
@@ -151,8 +155,6 @@ public class SchemaValidator extends AbstractHandler {
         if (objectResponse == null) {
             return true;
         }
-        //String contentType = objectResponse.toString();
-        //JSONObject payloadObject = getMessageContent(messageContext);
             try {
                 validateResponse(messageContext);
             } catch (APIManagementException e) {
@@ -178,12 +180,22 @@ public class SchemaValidator extends AbstractHandler {
         try {
             schema.validate(payloadObject);
         } catch (ValidationException e) {
-            if (messageContext.isResponse()) {
-                logger.error("Schema validation failed in the Response :" + e.getMessage(), e);
-            } else {
-                logger.error("Schema validation failed in the Request :" + e.getMessage(), e);
+            List<String> errorMessages =  e.getAllMessages();
+            String Finmessage = "";
+            for (String message: errorMessages) {
+                Finmessage += message + ", ";
+
             }
-            GatewayUtils.handleThreat(messageContext, APIMgtGatewayConstants.HTTP_SC_CODE, e.getMessage());
+            if (messageContext.isResponse()) {
+
+                logger.error("Schema validation failed in the Response :" + Finmessage, e);
+                handleThreat(messageContext, "500", "Schema validation failed in the Response :" + Finmessage);
+            } else {
+                logger.error("Schema validation failed in the Request :" + Finmessage, e);
+                handleThreat(messageContext, APIMgtGatewayConstants.HTTP_SC_CODE,"Schema validation failed in the Request :" + Finmessage);
+            }
+
+
         }
     }
 
@@ -232,14 +244,13 @@ public class SchemaValidator extends AbstractHandler {
         org.apache.axis2.context.MessageContext axis2MC = ((Axis2MessageContext)
                 messageContext).getAxis2MessageContext();
         String requestMethod;
-        if (messageContext.isResponse()) {
-            requestMethod = messageContext.getProperty(SchemaValidatorConstant.HTTP_RESPONSE_METHOD).toString();
-        } else {
-            requestMethod = axis2MC.getProperty(SchemaValidatorConstant.HTTP_REQUEST_METHOD).toString();
-        }
+//        if (messageContext.isResponse()) {
+//            requestMethod = messageContext.getProperty(SchemaValidatorConstant.HTTP_RESPONSE_METHOD).toString();
+//        } else {
+//            requestMethod = axis2MC.getProperty(SchemaValidatorConstant.HTTP_REQUEST_METHOD).toString();
+//        }
         JSONObject payloadObject = null;
-        if (!APIConstants.SupportedHTTPVerbs.GET.name().equalsIgnoreCase(requestMethod) && messageContext.getEnvelope().
-                getBody() != null) {
+        if (messageContext.getEnvelope().getBody() != null) {
             Object objFirstElement = messageContext.getEnvelope().getBody().getFirstElement();
             if (objFirstElement != null) {
                 OMElement xmlResponse = messageContext.getEnvelope().getBody().getFirstElement();
@@ -331,8 +342,17 @@ public class SchemaValidator extends AbstractHandler {
     private String extractResponse(MessageContext messageContext) throws APIManagementException {
         Object resourceSchema;
         Object resource;
+        Object content = null;
+        Object conSChema = null;
         String nonSchema = "";
-        String value;
+        String schema;
+        String value = null;
+        String nodeVal;
+        String searchLast = null;
+        ObjectMapper mapper = new ObjectMapper();
+        String name;
+        String refString;
+        Object schem;
         org.apache.axis2.context.MessageContext axis2MC = ((Axis2MessageContext)
                 messageContext).getAxis2MessageContext();
         String electedResource = messageContext.getProperty(SchemaValidatorConstant.API_ELECTED_RESOURCE).toString();
@@ -346,75 +366,119 @@ public class SchemaValidator extends AbstractHandler {
                 append(SchemaValidatorConstant.JSON_RESPONSES).append(responseStatus);
         resource = JsonPath.read(swagger, responseSchemaPath.toString());
 
-        ObjectMapper mapper = new ObjectMapper();
-        JsonNode jsonNode = mapper.convertValue(resource, JsonNode.class);
-        if (jsonNode.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(jsonNode)) {
-            value = jsonNode.get(0).toString();
-        } else {
-            value = jsonNode.toString();
+        if (resource != null) {
+            responseSchemaPath.append(".content");
+            content= JsonPath.read(swagger, responseSchemaPath.toString());
         }
-        if (value == null) {
-            return nonSchema;
+        if (content != null) {
+            responseSchemaPath.append(".application/json.schema.$ref");
+            conSChema = JsonPath.read(swagger, responseSchemaPath.toString());
         }
-        StringBuilder resPath = new StringBuilder();
-        resPath.append(SchemaValidatorConstant.PATHS).append(electedResource).append(
-                SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
-                append(SchemaValidatorConstant.JSON_RESPONSES).append(responseStatus).append(".schema");
-        resource = JsonPath.read(swagger, resPath.toString());
-        JsonNode json = mapper.convertValue(resource, JsonNode.class);
-        if (json.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(json.get(0))) {
-            value = json.get(0).toString();
-        } else {
-            value = json.toString();
-        }
-        if (value != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(value)) {
-            if (value.contains(SchemaValidatorConstant.SCHEMA_REFERENCE)) {
-                byte[] bytes = value.getBytes();
-                try {
-                    JsonNode node = mapper.readTree(bytes);
-                    Iterator<JsonNode> schemaNode = node.findParent(
-                            SchemaValidatorConstant.SCHEMA_REFERENCE).elements();
-                    return extractRef(schemaNode);
-                } catch (IOException e) {
-                    throw new APIManagementException("Error occurred while converting bytes from json node");
+        if (conSChema != null) {
+            if(!conSChema.toString().equals("[]")) {
+                return extractReference(conSChema.toString());
+
+            } else {
+                StringBuilder pathBuilder = new StringBuilder();
+                pathBuilder.append(SchemaValidatorConstant.PATHS).append(electedResource).
+                        append(SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
+                        append(SchemaValidatorConstant.JSON_RESPONSES).append(responseStatus).append(".content.application/json.schema");
+
+                schem = JsonPath.read(swagger, pathBuilder.toString()).toString();
+                JsonNode jsonNode = mapper.convertValue(schem, JsonNode.class);
+                if (jsonNode.get(0) != null) {
+                    value = jsonNode.get(0).toString();
+                } else {
+                    value = jsonNode.toString();
                 }
-            } else {
-                return value;
+
+                if (value.contains("items")) {
+
+                    StringBuilder requestSchemaPath = new StringBuilder();
+                    requestSchemaPath.append(SchemaValidatorConstant.PATHS).append(electedResource).
+                            append(SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
+                            append(SchemaValidatorConstant.JSON_RESPONSES).append(responseStatus).append(".content.application/json.schema.items");
+                    name = JsonPath.read(swagger, requestSchemaPath.toString()).toString();
+                    if (name.contains("$ref")) {
+                        requestSchemaPath.append(".$ref");
+                        extractReference(name);
+                        return JsonPath.read(swagger, requestSchemaPath.toString()).toString();
+                    }
+                    return value;
+                }
             }
-        } else {
-            StringBuilder responseDefaultPath = new StringBuilder();
-            responseDefaultPath.append(SchemaValidatorConstant.PATHS).append(electedResource).
-                    append(SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
-                    append(".responses.default");
-            resourceSchema = JsonPath.read(swagger, responseDefaultPath.toString());
-            JsonNode jnode = mapper.convertValue(resourceSchema, JsonNode.class);
-            if (jnode.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(jnode)) {
-                value = jnode.get(0).toString();
+        }
+
+///////////////////////////////////////////
+       // if (jsonNode.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(jsonNode)) {
+//            value = jsonNode.get(0).toString();
+//        } else {
+//            value = jsonNode.toString();
+//        }
+//        if (value == null) {
+//            return nonSchema;
+//        }
+            StringBuilder resPath = new StringBuilder();
+            resPath.append(SchemaValidatorConstant.PATHS).append(electedResource).append(
+                    SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
+                    append(SchemaValidatorConstant.JSON_RESPONSES).append(responseStatus).append(".schema");
+            resource = JsonPath.read(swagger, resPath.toString());
+            JsonNode json = mapper.convertValue(resource, JsonNode.class);
+            if (json.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(json.get(0))) {
+                value = json.get(0).toString();
             } else {
-                value = jnode.toString();
+                value = json.toString();
             }
-            if (resourceSchema != null) {
+            if (value != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(value)) {
                 if (value.contains(SchemaValidatorConstant.SCHEMA_REFERENCE)) {
                     byte[] bytes = value.getBytes();
                     try {
                         JsonNode node = mapper.readTree(bytes);
-                        if (node != null) {
-                            Iterator<JsonNode> schemaNode = node.findParent(
-                                    SchemaValidatorConstant.SCHEMA_REFERENCE).elements();
-                            return extractRef(schemaNode);
-                        }
+                        Iterator<JsonNode> schemaNode = node.findParent(
+                                SchemaValidatorConstant.SCHEMA_REFERENCE).elements();
+                        return extractReference(schemaNode.next().toString());
                     } catch (IOException e) {
-                        logger.error("Error occurred while reading the schema.", e);
-                        throw new APIManagementException(e);
+                        throw new APIManagementException("Error occurred while converting bytes from json node");
                     }
                 } else {
                     return value;
                 }
             } else {
-                return value;
+                StringBuilder responseDefaultPath = new StringBuilder();
+                responseDefaultPath.append(SchemaValidatorConstant.PATHS).append(electedResource).
+                        append(SchemaValidatorConstant.JSONPATH_SEPARATE).append(reqMethod.toLowerCase()).
+                        append(".responses.default");
+                resourceSchema = JsonPath.read(swagger, responseDefaultPath.toString());
+                JsonNode jnode = mapper.convertValue(resourceSchema, JsonNode.class);
+                if (jnode.get(0) != null && !SchemaValidatorConstant.EMPTY_ARRAY.equals(jnode)) {
+                    value = jnode.get(0).toString();
+                } else {
+                    value = jnode.toString();
+                }
+                if (resourceSchema != null) {
+                    if (value.contains(SchemaValidatorConstant.SCHEMA_REFERENCE)) {
+                        byte[] bytes = value.getBytes();
+                        try {
+                            JsonNode node = mapper.readTree(bytes);
+                            if (node != null) {
+                                Iterator<JsonNode> schemaNode = node.findParent(
+                                        SchemaValidatorConstant.SCHEMA_REFERENCE).elements();
+                                return extractRef(schemaNode);
+                            }
+                        } catch (IOException e) {
+                            logger.error("Error occurred while reading the schema.", e);
+                            throw new APIManagementException(e);
+                        }
+                    } else {
+                        return value;
+                    }
+                } else {
+                    return value;
+                }
             }
-        }
-        return nonSchema;
+
+        //////////////
+        return value;
     }
 
     /**
@@ -495,27 +559,34 @@ public class SchemaValidator extends AbstractHandler {
         String[] val = schemaNode.split("" + SchemaValidatorConstant.HASH);
         String path = val[1].replaceAll("\"|}|]|\\\\", "");
         String searchLastIndex = null;
+        StringBuilder extractRefPath = null;
         if (StringUtils.isNotEmpty(path)) {
             int index = path.lastIndexOf(SchemaValidatorConstant.FORWARD_SLASH);
             searchLastIndex = path.substring(index + 1);
         }
         String nodeVal = path.replaceAll("" + SchemaValidatorConstant.FORWARD_SLASH, ".");
-        String name;
+        String name = null;
         Object object = JsonPath.read(swagger, SchemaValidatorConstant.JSON_PATH + nodeVal);
         ObjectMapper mapper = new ObjectMapper();
         String value;
+        String res = null;
         JsonNode jsonSchema = mapper.convertValue(object, JsonNode.class);
         if (jsonSchema.get(0) != null) {
             value = jsonSchema.get(0).toString();
         } else {
             value = jsonSchema.toString();
         }
-        if (value.contains(SchemaValidatorConstant.SCHEMA_REFERENCE)) {
-            StringBuilder extractRefPath = new StringBuilder();
+        if (value.contains(SchemaValidatorConstant.SCHEMA_REFERENCE) && !nodeVal.contains("definitions")) {
+            extractRefPath = new StringBuilder();
             extractRefPath.append(SchemaValidatorConstant.JSON_PATH).append(
                     SchemaValidatorConstant.REQUESTBODY_SCHEMA).
                     append(searchLastIndex).append(".content.application/json.schema");
-            String res = JsonPath.read(swagger, extractRefPath.toString()).toString();
+
+            Object ret = JsonPath.read(swagger, extractRefPath.toString());
+            if (ret != null) {
+                res = ret.toString();
+            }
+            //  String res = JsonPath.read(swagger, extractRefPath.toString()).toString();
             if (res.contains("items")) {
                 StringBuilder requestSchemaPath = new StringBuilder();
                 requestSchemaPath.append(SchemaValidatorConstant.JSON_PATH).
@@ -549,6 +620,27 @@ public class SchemaValidator extends AbstractHandler {
                     extractReference(name);
                 }
             }
+        } else if (nodeVal.contains("definitions")) {
+            StringBuilder requestSchemaPath = new StringBuilder();
+            requestSchemaPath.append("$.definitions.").append(searchLastIndex);
+           Object  nameObj = JsonPath.read(swagger, requestSchemaPath.toString());
+           mapper = new ObjectMapper();
+
+            try {
+                JsonNode jsonNode = mapper.convertValue(nameObj, JsonNode.class);
+                generateSchema(jsonNode);
+                if (jsonNode.get(0) != null) {
+                    name = jsonNode.get(0).toString();
+                } else {
+                    name = jsonNode.toString();
+                }
+            } catch (APIManagementException e) {
+                logger.error("Error occurred while generating the schema content for " +
+                        "the particular request", e);
+            }
+            schemaContent = name;
+
+
         } else {
             schemaContent = value;
             return schemaContent;
@@ -593,5 +685,34 @@ public class SchemaValidator extends AbstractHandler {
                 generateArraySchemas(entry);
             }
         }
+    }
+
+    /**
+     * This method handles threat violations. If the request propagates a threat, this method generates
+     * an custom exception.
+     * @param messageContext contains the message properties of the relevant API request which was
+     *                       enabled the regexValidator message mediation in flow.
+     * @param errorCode      It depends on status of the error message.
+     * @param desc           Description of the error message.It describes the vulnerable type and where it happens.
+     * @return here return true to continue the sequence. No need to return any value from this method.
+     */
+    public static boolean handleThreat(org.apache.synapse.MessageContext messageContext,
+                                       String errorCode, String desc) {
+        messageContext.setProperty(APIMgtGatewayConstants.THREAT_FOUND, true);
+        messageContext.setProperty(APIMgtGatewayConstants.THREAT_CODE, errorCode);
+        if (messageContext.isResponse()) {
+            messageContext.setProperty(APIMgtGatewayConstants.THREAT_MSG, "Bad Response");
+        } else {
+            messageContext.setProperty(APIMgtGatewayConstants.THREAT_MSG, APIMgtGatewayConstants.BAD_REQUEST);
+
+        }
+        messageContext.setProperty(APIMgtGatewayConstants.THREAT_DESC, desc);
+        Mediator sequence = messageContext.getSequence(APIMgtGatewayConstants.THREAT_FAULT);
+        // Invoke the custom error handler specified by the user
+        if (sequence != null && !sequence.mediate(messageContext)) {
+            // If needed user should be able to prevent the rest of the fault handling
+            // logic from getting executed
+        }
+        return true;
     }
 }

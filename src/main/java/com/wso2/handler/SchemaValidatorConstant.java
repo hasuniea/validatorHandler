@@ -21,6 +21,8 @@ public class SchemaValidatorConstant {
     public static final String BACKWARD_SLASH = "\"";
     public static final char FORWARD_SLASH = '/';
     public static final String REQUESTBODY_SCHEMA = "components.requestBodies.";
+    public static final String REQUESTBODY = "requestBodies.";
+    public static final String COMPONENTS = "components";
     public static final String OPEN_API_STRING = "OPEN_API_STRING";
     public static final String HTTP_SC = "HTTP_SC";
     public static final String CONTENT_TYPE = "synapse.internal.rest.contentType";
