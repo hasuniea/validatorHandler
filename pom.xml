@@ -220,7 +220,7 @@
     <properties>
         <everit.version>1.5.0.wso2.v1</everit.version>
         <json.orbit.version>3.0.0.wso2v1</json.orbit.version>
-        <fasterxml.jackson.databind.version>2.9.10</fasterxml.jackson.databind.version>
+        <fasterxml.jackson.databind.version>2.10.0.pr1</fasterxml.jackson.databind.version>
         <javax.xml.stream.imp.pkg.version>[1.0.1, 1.1.0)</javax.xml.stream.imp.pkg.version>
         <maven-compiler-plugin.version>2.3.2</maven-compiler-plugin.version>
         <maven-bundle-plugin.version>3.2.0</maven-bundle-plugin.version>
