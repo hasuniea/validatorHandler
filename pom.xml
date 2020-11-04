@@ -230,7 +230,7 @@
         <carbon.apimgt.version>6.4.50</carbon.apimgt.version>
         <javax.xml.stream.imp.pkg.version>[1.0.1, 1.1.0)</javax.xml.stream.imp.pkg.version>
         <apache.commons.lang3.version>3.9</apache.commons.lang3.version>
-        <synapse.version>2.1.7-wso2v80</synapse.version>
+        <synapse.version>3.0.1</synapse.version>
         <com.jayway.jsonpath.version>2.4.0.wso2v2</com.jayway.jsonpath.version>
     </properties>
 
